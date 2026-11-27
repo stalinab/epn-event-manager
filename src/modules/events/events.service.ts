@@ -23,8 +23,7 @@ export class EventsService {
   async registerEvent(dto: CreateEventDto): Promise<{ ok: boolean }> {
     const action = (dto.action ?? '').toUpperCase();
     const payloadStr = JSON.stringify(dto.payload ?? {});
-    // Fecha guardada en formato local, no UTC (debilidad intencional)
-    const localDate = new Date().toLocaleString();
+    const isoDate = new Date().toISOString();
 
     if (action === 'CREATE') {
       const ev = this.createRepo.create({
@@ -34,7 +33,7 @@ export class EventsService {
         title: dto.title,
         description: dto.description,
         payload: payloadStr,
-        recorded_at: localDate,
+        recorded_at: isoDate,
       });
       await this.createRepo.save(ev);
       return { ok: true };
@@ -48,7 +47,7 @@ export class EventsService {
         title: dto.title,
         description: dto.description,
         payload: payloadStr,
-        timestamp: localDate,
+        timestamp: isoDate,
       });
       await this.updateRepo.save(ev);
       return { ok: true };
@@ -62,7 +61,7 @@ export class EventsService {
         title: dto.title,
         description: dto.description,
         payload: payloadStr,
-        createdAt: localDate,
+        createdAt: isoDate,
       });
       await this.deleteRepo.save(ev);
       return { ok: true };
@@ -76,13 +75,44 @@ export class EventsService {
         title: dto.title,
         description: dto.description,
         payload: payloadStr,
-        event_date: localDate,
+        event_date: isoDate,
       });
       await this.queryRepo.save(ev);
       return { ok: true };
     }
 
     return { ok: false };
+  }
+
+  private mapNormalizedEvents(
+    creates: CreateEventEntity[],
+    updates: UpdateEventEntity[],
+    deletes: DeleteEventEntity[],
+    queries: QueryEventEntity[],
+    includeTable = false,
+  ) {
+    return [
+      ...creates.map((e) => ({
+        ...e,
+        ...(includeTable ? { _table: 'create_events' } : {}),
+        occurredAt: e.recorded_at,
+      })),
+      ...updates.map((e) => ({
+        ...e,
+        ...(includeTable ? { _table: 'update_events' } : {}),
+        occurredAt: e.timestamp,
+      })),
+      ...deletes.map((e) => ({
+        ...e,
+        ...(includeTable ? { _table: 'delete_events' } : {}),
+        occurredAt: e.createdAt,
+      })),
+      ...queries.map((e) => ({
+        ...e,
+        ...(includeTable ? { _table: 'query_events' } : {}),
+        occurredAt: e.event_date,
+      })),
+    ];
   }
 
   async findAll(): Promise<object[]> {
@@ -92,23 +122,15 @@ export class EventsService {
     const deletes = await this.deleteRepo.find();
     const queries = await this.queryRepo.find();
 
-    // Ordena lexicograficamente por strings de fecha heterogeneos (incorrecto)
-    const merged = [
-      ...creates.map((e) => ({ ...e, _table: 'create_events' })),
-      ...updates.map((e) => ({ ...e, _table: 'update_events' })),
-      ...deletes.map((e) => ({ ...e, _table: 'delete_events' })),
-      ...queries.map((e) => ({ ...e, _table: 'query_events' })),
-    ];
+    const merged = this.mapNormalizedEvents(
+      creates,
+      updates,
+      deletes,
+      queries,
+      true,
+    );
 
-    merged.sort((a, b) => {
-      const ra = a as unknown as Record<string, string>;
-      const rb = b as unknown as Record<string, string>;
-      const ta =
-        ra.recorded_at ?? ra.timestamp ?? ra.createdAt ?? ra.event_date ?? '';
-      const tb =
-        rb.recorded_at ?? rb.timestamp ?? rb.createdAt ?? rb.event_date ?? '';
-      return ta.localeCompare(tb);
-    });
+    merged.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
 
     return merged;
   }
@@ -118,7 +140,7 @@ export class EventsService {
     const updates = await this.updateRepo.findBy({ source });
     const deletes = await this.deleteRepo.findBy({ source });
     const queries = await this.queryRepo.findBy({ source });
-    return [...creates, ...updates, ...deletes, ...queries];
+    return this.mapNormalizedEvents(creates, updates, deletes, queries);
   }
 
   async findByEntity(entity: string): Promise<object[]> {
@@ -127,7 +149,7 @@ export class EventsService {
     const updates = await this.updateRepo.findBy({ entity });
     const deletes = await this.deleteRepo.findBy({ entity });
     const queries = await this.queryRepo.findBy({ entity });
-    return [...creates, ...updates, ...deletes, ...queries];
+    return this.mapNormalizedEvents(creates, updates, deletes, queries);
   }
 
   async getStats(): Promise<object> {
