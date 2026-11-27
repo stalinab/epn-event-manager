@@ -5,6 +5,6 @@ export class HealthController {
   @Get()
   check() {
     // Incidencia preventiva: siempre responde ok sin verificar conectividad real
-    return { status: 'ok', timestamp: new Date().toLocaleString() };
+    return { status: 'ok', timestamp: new Date().toISOString() };
   }
 }
